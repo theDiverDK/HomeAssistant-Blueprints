@@ -1,0 +1,218 @@
+blueprint:
+  name: Ikea E1743's Light control with night brightness
+  description: >
+    Controls a light with a switch given by ENTITY.
+
+    Short Button press will toggle light for both Buttons (helpful in darkness)
+
+    Mode set to restart is mandatory for stop after long press to work.
+  domain: automation
+  input:
+    source_switch_action:
+      name: Tradfri E1743 Switch
+      description: The switch-action which triggers this automation.
+      selector:
+        entity:
+          filter:
+            - integration: mqtt
+              domain:
+                - sensor
+          multiple: true
+    target_light:
+      name: Target Light
+      description: The lights or switches you want to control.
+      selector:
+        target:
+          entity:
+            domain:
+              - light
+              - group
+    target_switches:
+      name: Target Switches
+      description: The switches you want to control.
+      selector:
+        entity:
+          domain:
+            - switch
+            - group
+          multiple: true
+      default: []
+    helper_transition_dim:
+      name: Helper - Transition time for dimming up / down
+      description: Transition time in seconds for dimming up / down. 0 makes visible steps. Greater than 0.1 makes it smoother. (0.0-10.0)
+      default: 0.5
+      selector:
+        number:
+          min: 0.0
+          max: 10.0
+          mode: box
+          step: 0.5
+    helper_delay:
+      name: Helper - Delay between each dimming step
+      description: How long should be delayed between each step of dimming in milliseconds. 0 makes no delay. (10-2000)
+      default: 100
+      selector:
+        number:
+          min: 10
+          max: 2000
+          mode: box
+          step: 10
+    time_based_brightness_enable:
+      name: Enable Time-Based Brightness
+      description: Enable or disable the time-based brightness settings.
+      default: false
+      selector:
+        boolean: {}
+    brightness_start_time:
+      name: Brightness Start Time
+      description: The time when the brightness control period starts.
+      default: "18:00:00"
+      selector:
+        time: {}
+    brightness_end_time:
+      name: Brightness End Time
+      description: The time when the brightness control period ends.
+      default: "23:00:00"
+      selector:
+        time: {}
+    max_brightness:
+      name: Maximum Brightness
+      description: Maximum brightness percentage (0-100%) during the specified time period.
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          mode: slider
+          step: 1
+alias: Z2M - Tradfri E1743 Switch On Off Dimming Light
+trigger:
+  - platform: state
+    entity_id: !input source_switch_action
+    id: "on"
+    to: "on"
+  - platform: state
+    entity_id: !input source_switch_action
+    id: "off"
+    to: "off"
+  - platform: state
+    entity_id: !input source_switch_action
+    id: brightness_move_up
+    to: brightness_move_up
+  - platform: state
+    entity_id: !input source_switch_action
+    id: brightness_move_down
+    to: brightness_move_down
+  - platform: state
+    entity_id: !input source_switch_action
+    id: brightness_stop
+    to: brightness_stop
+condition: []
+variables:
+  source_switch_action: !input source_switch_action
+  target_light: !input target_light
+  target_switches: !input target_switches
+  helper_transition_dim: !input helper_transition_dim
+  helper_delay: !input helper_delay
+  time_based_brightness_enable: !input time_based_brightness_enable
+  brightness_start_time: !input brightness_start_time
+  brightness_end_time: !input brightness_end_time
+  max_brightness: !input max_brightness
+  current_time: "{{ now().strftime('%H:%M:%S') }}"
+  within_brightness_period: >
+    {{ time_based_brightness_enable and (
+       (brightness_start_time <= brightness_end_time and brightness_start_time <= current_time <= brightness_end_time) or
+       (brightness_start_time > brightness_end_time and (current_time >= brightness_start_time or current_time <= brightness_end_time))
+    ) }}
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: "on"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ not is_state(target_light.entity_id, 'on') }}"
+                sequence:
+                  - service: homeassistant.turn_on
+                    target: !input target_light
+                    data:
+                      brightness_pct: "{{ max_brightness if within_brightness_period else 100 }}"
+                  - condition: template
+                    value_template: "{{ target_switches | length > 0 and (not within_brightness_period) }}"
+                  - service: homeassistant.turn_on
+                    target:
+                      entity_id: !input target_switches
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(target_light.entity_id, 'on') }}"
+                sequence:
+                  - service: homeassistant.turn_off
+                    target: !input target_light
+                  - service: homeassistant.turn_off
+                    target:
+                      entity_id: !input target_switches
+      - conditions:
+          - condition: trigger
+            id: "off"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ not is_state(target_light.entity_id, 'on') }}"
+                sequence:
+                  - service: homeassistant.turn_on
+                    target: !input target_light
+                    data:
+                      brightness_pct: "{{ max_brightness if within_brightness_period else 100 }}"
+                  - condition: template
+                    value_template: "{{ target_switches | length > 0 and (not within_brightness_period) }}"
+                  - service: homeassistant.turn_on
+                    target:
+                      entity_id: !input target_switches
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(target_light.entity_id, 'on') }}"
+                sequence:
+                  - service: homeassistant.turn_off
+                    target: !input target_light
+                  - service: homeassistant.turn_off
+                    target:
+                      entity_id: !input target_switches
+      - conditions:
+          - condition: trigger
+            id: brightness_move_up
+        sequence:
+          - repeat:
+              until:
+                - condition: state
+                  entity_id: !input source_switch_action
+                  state: 'brightness_stop'
+              sequence:
+                - service: light.turn_on
+                  target: !input target_light
+                  data:
+                    brightness_step_pct: 10
+                    transition: !input helper_transition_dim
+                - delay:
+                    milliseconds: !input helper_delay
+      - conditions:
+          - condition: trigger
+            id: brightness_move_down
+        sequence:
+          - repeat:
+              until:
+                - condition: state
+                  entity_id: !input source_switch_action
+                  state: 'brightness_stop'
+              sequence:
+                - service: light.turn_on
+                  target: !input target_light
+                  data:
+                    brightness_step_pct: -10
+                    transition: !input helper_transition_dim
+                - delay:
+                    milliseconds: !input helper_delay
+mode: restart
+
