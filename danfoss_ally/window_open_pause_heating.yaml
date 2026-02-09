@@ -1,11 +1,14 @@
 blueprint:
-  name: Danfoss Ally (Zigbee2MQTT) - Pause Heating On Open Window
+  name: Danfoss Ally (Zigbee2MQTT) - Pause/Resume Heating On Window State
   description: >
-    Sets Danfoss Ally thermostats to Window open/close = Open when any selected
-    open/close sensor has remained open for the configured time.
+    Pauses Danfoss Ally heating (window_open_external = on) when any selected
+    open/close sensor has remained open for the configured time, and resumes
+    heating (window_open_external = off) once all selected sensors are closed.
 
     This blueprint targets Zigbee2MQTT by controlling each thermostat's
-    `window_open_external` switch entity (turn on = open window detected).
+    `window_open_external` switch entity (turn on = open window detected,
+    turn off = resume normal heating).
+  source_url: https://github.com/sorenreinke/HomeAssistant-Blueprints/blob/main/danfoss_ally/window_open_pause_heating.yaml
   domain: automation
 
   input:
@@ -40,23 +43,59 @@ blueprint:
       selector:
         duration:
 
-mode: restart
+    close_for:
+      name: Closed duration before resume
+      description: How long all sensors must stay closed before heating resumes.
+      default: "00:01:00"
+      selector:
+        duration:
+
+mode: single
 max_exceeded: silent
 
 variables:
+  monitored_open_close_sensors: !input open_close_sensors
   trv_window_open_switches: !input thermostats_window_open
 
 trigger:
   - platform: state
+    id: open_delay
     entity_id: !input open_close_sensors
     from: "off"
     to: "on"
     for: !input open_for
+  - platform: state
+    id: close_detected
+    entity_id: !input open_close_sensors
+    from: "on"
+    to: "off"
+    for: !input close_for
 
 action:
-  - repeat:
-      for_each: "{{ trv_window_open_switches }}"
-      sequence:
-        - service: switch.turn_on
-          target:
-            entity_id: "{{ repeat.item }}"
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: open_delay
+        sequence:
+          - repeat:
+              for_each: "{{ trv_window_open_switches }}"
+              sequence:
+                - service: switch.turn_on
+                  target:
+                    entity_id: "{{ repeat.item }}"
+      - conditions:
+          - condition: trigger
+            id: close_detected
+          - condition: template
+            value_template: >
+              {{ expand(monitored_open_close_sensors)
+                 | selectattr('state', 'ne', 'off')
+                 | list
+                 | count == 0 }}
+        sequence:
+          - repeat:
+              for_each: "{{ trv_window_open_switches }}"
+              sequence:
+                - service: switch.turn_off
+                  target:
+                    entity_id: "{{ repeat.item }}"
