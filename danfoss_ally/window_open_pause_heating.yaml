@@ -3,11 +3,13 @@ blueprint:
   description: >
     Pauses Danfoss Ally heating (window_open_external = on) when any selected
     open/close sensor has remained open for the configured time, and resumes
-    heating (window_open_external = off) once all selected sensors are closed.
+    heating (window_open_external = off) once no selected sensors are open.
 
     This blueprint targets Zigbee2MQTT by controlling each thermostat's
     `window_open_external` switch entity (turn on = open window detected,
     turn off = resume normal heating).
+
+    It also supports startup/reload state sync.
   source_url: https://github.com/sorenreinke/HomeAssistant-Blueprints/blob/main/danfoss_ally/window_open_pause_heating.yaml
   domain: automation
 
@@ -45,10 +47,21 @@ blueprint:
 
     close_for:
       name: Closed duration before resume
-      description: How long all sensors must stay closed before heating resumes.
+      description: >
+        How long a sensor must stay in a not-open state (`off`, `unknown`,
+        `unavailable`) before the automation re-evaluates resume.
       default: "00:01:00"
       selector:
         duration:
+
+    sync_on_startup:
+      name: Sync state on startup/reload
+      description: >
+        On Home Assistant startup or automation reload, re-evaluate all selected
+        sensors and set thermostat window-open switches accordingly.
+      default: true
+      selector:
+        boolean:
 
 mode: single
 max_exceeded: silent
@@ -56,26 +69,47 @@ max_exceeded: silent
 variables:
   monitored_open_close_sensors: !input open_close_sensors
   trv_window_open_switches: !input thermostats_window_open
+  startup_sync_enabled: !input sync_on_startup
 
 trigger:
   - platform: state
-    id: open_delay
+    id: delayed_recheck
     entity_id: !input open_close_sensors
-    from: "off"
     to: "on"
     for: !input open_for
   - platform: state
-    id: close_detected
+    id: delayed_recheck
     entity_id: !input open_close_sensors
-    from: "on"
     to: "off"
     for: !input close_for
+  - platform: state
+    id: delayed_recheck
+    entity_id: !input open_close_sensors
+    to: "unknown"
+    for: !input close_for
+  - platform: state
+    id: delayed_recheck
+    entity_id: !input open_close_sensors
+    to: "unavailable"
+    for: !input close_for
+  - platform: homeassistant
+    id: startup_sync
+    event: start
+  - platform: event
+    id: startup_sync
+    event_type: automation_reloaded
 
 action:
+  - condition: template
+    value_template: "{{ trigger.id != 'startup_sync' or startup_sync_enabled }}"
   - choose:
       - conditions:
-          - condition: trigger
-            id: open_delay
+          - condition: template
+            value_template: >
+              {{ expand(monitored_open_close_sensors)
+                 | selectattr('state', 'eq', 'on')
+                 | list
+                 | count > 0 }}
         sequence:
           - repeat:
               for_each: "{{ trv_window_open_switches }}"
@@ -83,19 +117,10 @@ action:
                 - service: switch.turn_on
                   target:
                     entity_id: "{{ repeat.item }}"
-      - conditions:
-          - condition: trigger
-            id: close_detected
-          - condition: template
-            value_template: >
-              {{ expand(monitored_open_close_sensors)
-                 | selectattr('state', 'ne', 'off')
-                 | list
-                 | count == 0 }}
-        sequence:
-          - repeat:
-              for_each: "{{ trv_window_open_switches }}"
-              sequence:
-                - service: switch.turn_off
-                  target:
-                    entity_id: "{{ repeat.item }}"
+    default:
+      - repeat:
+          for_each: "{{ trv_window_open_switches }}"
+          sequence:
+            - service: switch.turn_off
+              target:
+                entity_id: "{{ repeat.item }}"
