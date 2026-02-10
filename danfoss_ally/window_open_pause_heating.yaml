@@ -1,18 +1,17 @@
 blueprint:
   name: Danfoss Ally (Zigbee2MQTT) - Pause/Resume Heating On Window State
-  description: >
-    Pauses Danfoss Ally heating (window_open_external = on) when any selected
-    open/close sensor has remained open for the configured time, and resumes
-    heating (window_open_external = off) once no selected sensors are open.
+  description: 'Pauses Danfoss Ally heating (window_open_external = on) when any selected
+    open/close sensor has remained open for the configured time, and resumes heating
+    (window_open_external = off) once no selected sensors are open.
 
-    This blueprint targets Zigbee2MQTT by controlling each thermostat's
-    `window_open_external` switch entity (turn on = open window detected,
-    turn off = resume normal heating).
+    This blueprint targets Zigbee2MQTT by controlling each thermostat''s `window_open_external`
+    switch entity (turn on = open window detected, turn off = resume normal heating).
 
     It also supports startup/reload state sync.
-  source_url: https://github.com/sorenreinke/HomeAssistant-Blueprints/blob/main/danfoss_ally/window_open_pause_heating.yaml
-  domain: automation
 
+    '
+  source_url: https://github.com/theDiverDK/HomeAssistant-Blueprints/blob/main/danfoss_ally/window_open_pause_heating.yaml
+  domain: automation
   input:
     open_close_sensors:
       name: Open/Close sensors
@@ -21,106 +20,102 @@ blueprint:
         entity:
           multiple: true
           filter:
-            - domain: binary_sensor
-              device_class:
-                - door
-                - window
-
+          - domain:
+            - binary_sensor
+            device_class:
+            - door
+            - window
+          reorder: false
     thermostats_window_open:
       name: Danfoss Ally window-open controls
-      description: >
-        Select 1..n Zigbee2MQTT switch entities for `window_open_external`
+      description: 'Select 1..n Zigbee2MQTT switch entities for `window_open_external`
         (typically named like `switch.<trv>_window_open_external`).
+
+        '
       selector:
         entity:
           multiple: true
           filter:
-            - domain: switch
-              integration: mqtt
-
+          - domain:
+            - switch
+            integration: mqtt
+          reorder: false
     open_for:
       name: Open duration before pause
       description: How long a sensor must stay open before heating is paused.
-      default: "00:05:00"
+      default: 00:05:00
       selector:
-        duration:
-
+        duration: {}
     close_for:
       name: Closed duration before resume
-      description: >
-        How long a sensor must stay in a not-open state (`off`, `unknown`,
+      description: 'How long a sensor must stay in a not-open state (`off`, `unknown`,
         `unavailable`) before the automation re-evaluates resume.
-      default: "00:01:00"
-      selector:
-        duration:
 
+        '
+      default: 00:01:00
+      selector:
+        duration: {}
     sync_on_startup:
       name: Sync state on startup/reload
-      description: >
-        On Home Assistant startup or automation reload, re-evaluate all selected
-        sensors and set thermostat window-open switches accordingly.
+      description: 'On Home Assistant startup or automation reload, re-evaluate all
+        selected sensors and set thermostat window-open switches accordingly.
+
+        '
       default: true
       selector:
-        boolean:
-
+        boolean: {}
 mode: single
 max_exceeded: silent
-
 variables:
   monitored_open_close_sensors: !input open_close_sensors
   trv_window_open_switches: !input thermostats_window_open
   startup_sync_enabled: !input sync_on_startup
-
 trigger:
-  - platform: state
-    id: delayed_recheck
-    entity_id: !input open_close_sensors
-    to: "on"
-    for: !input open_for
-  - platform: state
-    id: delayed_recheck
-    entity_id: !input open_close_sensors
-    to: "off"
-    for: !input close_for
-  - platform: state
-    id: delayed_recheck
-    entity_id: !input open_close_sensors
-    to: "unknown"
-    for: !input close_for
-  - platform: state
-    id: delayed_recheck
-    entity_id: !input open_close_sensors
-    to: "unavailable"
-    for: !input close_for
-  - platform: homeassistant
-    id: startup_sync
-    event: start
-  - platform: event
-    id: startup_sync
-    event_type: automation_reloaded
-
+- platform: state
+  id: delayed_recheck
+  entity_id: !input open_close_sensors
+  to: 'on'
+  for: !input open_for
+- platform: state
+  id: delayed_recheck
+  entity_id: !input open_close_sensors
+  to: 'off'
+  for: !input close_for
+- platform: state
+  id: delayed_recheck
+  entity_id: !input open_close_sensors
+  to: unknown
+  for: !input close_for
+- platform: state
+  id: delayed_recheck
+  entity_id: !input open_close_sensors
+  to: unavailable
+  for: !input close_for
+- platform: homeassistant
+  id: startup_sync
+  event: start
+- platform: event
+  id: startup_sync
+  event_type: automation_reloaded
 action:
-  - condition: template
-    value_template: "{{ trigger.id != 'startup_sync' or startup_sync_enabled }}"
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: >
-              {{ expand(monitored_open_close_sensors)
-                 | selectattr('state', 'eq', 'on')
-                 | list
-                 | count > 0 }}
+- condition: template
+  value_template: '{{ trigger.id != ''startup_sync'' or startup_sync_enabled }}'
+- choose:
+  - conditions:
+    - condition: template
+      value_template: "{{ expand(monitored_open_close_sensors)\n   | selectattr('state',
+        'eq', 'on')\n   | list\n   | count > 0 }}\n"
+    sequence:
+    - repeat:
+        for_each: '{{ trv_window_open_switches }}'
         sequence:
-          - repeat:
-              for_each: "{{ trv_window_open_switches }}"
-              sequence:
-                - service: switch.turn_on
-                  target:
-                    entity_id: "{{ repeat.item }}"
-    default:
-      - repeat:
-          for_each: "{{ trv_window_open_switches }}"
-          sequence:
-            - service: switch.turn_off
-              target:
-                entity_id: "{{ repeat.item }}"
+        - service: switch.turn_on
+          target:
+            entity_id: '{{ repeat.item }}'
+  default:
+  - repeat:
+      for_each: '{{ trv_window_open_switches }}'
+      sequence:
+      - service: switch.turn_off
+        target:
+          entity_id: '{{ repeat.item }}'
