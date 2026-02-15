@@ -66,30 +66,20 @@ blueprint:
         boolean: {}
 mode: single
 max_exceeded: silent
+trigger_variables:
+  monitored_open_close_sensors: !input open_close_sensors
 variables:
   monitored_open_close_sensors: !input open_close_sensors
   trv_window_open_switches: !input thermostats_window_open
   startup_sync_enabled: !input sync_on_startup
 trigger:
-- platform: state
-  id: delayed_recheck
-  entity_id: !input open_close_sensors
-  to: 'on'
+- platform: template
+  id: any_open_for
+  value_template: "{{ expand(monitored_open_close_sensors) | selectattr('state', 'eq', 'on') | list | count > 0 }}"
   for: !input open_for
-- platform: state
-  id: delayed_recheck
-  entity_id: !input open_close_sensors
-  to: 'off'
-  for: !input close_for
-- platform: state
-  id: delayed_recheck
-  entity_id: !input open_close_sensors
-  to: unknown
-  for: !input close_for
-- platform: state
-  id: delayed_recheck
-  entity_id: !input open_close_sensors
-  to: unavailable
+- platform: template
+  id: no_open_for
+  value_template: "{{ expand(monitored_open_close_sensors) | selectattr('state', 'eq', 'on') | list | count == 0 }}"
   for: !input close_for
 - platform: homeassistant
   id: startup_sync
