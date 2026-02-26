@@ -91,7 +91,7 @@ trigger:
 
   - platform: time_pattern
     id: periodic_check
-    minutes: "*/5"
+    minutes: "/5"
 
 condition:
   - condition: numeric_state
