@@ -1,0 +1,135 @@
+blueprint:
+  name: Inform when not in use
+  description: >-
+    Sends a push notification when a selected power sensor has stayed under a
+    chosen watt threshold for an entire period, and optionally sends a second
+    notification when usage goes above the threshold again.
+  domain: automation
+  input:
+    power_sensor:
+      name: Power sensor
+      description: Sensor with current power usage in Watts (W)
+      selector:
+        entity:
+          domain: sensor
+    max_watts:
+      name: Max watt threshold
+      description: Notification triggers when power stays below this value
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 10000
+          step: 0.1
+          unit_of_measurement: W
+          mode: box
+    below_for:
+      name: Period under threshold
+      description: Must stay below max watts for the full period
+      default:
+        hours: 0
+        minutes: 30
+        seconds: 0
+      selector:
+        duration: {}
+    mobile_device:
+      name: Mobile device
+      description: Phone/tablet that should receive the push notification
+      selector:
+        device:
+          filter:
+            integration: mobile_app
+    notify_message:
+      name: Notification message
+      description: Message to send when not in use
+      default: "Enheden har ikke været i brug i den valgte periode."
+      selector:
+        text:
+    notify_once:
+      name: Kun én besked pr. inaktiv-periode
+      description: >-
+        Hvis slået til, sendes kun én besked mens forbruget er under grænsen.
+        En ny besked kan først sendes efter forbruget har været over grænsen
+        igen (ny inaktiv-periode).
+      default: true
+      selector:
+        boolean: {}
+    notify_on_above:
+      name: Send besked når forbrug går over grænsen igen
+      description: Send en ekstra push-besked når enheden er i brug igen
+      default: true
+      selector:
+        boolean: {}
+    notify_message_above:
+      name: Besked ved forbrug over grænsen
+      description: Besked når forbruget går over grænsen igen
+      default: "Enheden er i brug igen."
+      selector:
+        text:
+
+mode: single
+
+variables:
+  power_sensor: !input power_sensor
+  max_watts: !input max_watts
+  below_for: !input below_for
+  notify_once: !input notify_once
+  notify_on_above: !input notify_on_above
+  below_seconds: >-
+    {{
+      (below_for.hours | default(0) | int) * 3600 +
+      (below_for.minutes | default(0) | int) * 60 +
+      (below_for.seconds | default(0) | int)
+    }}
+
+trigger:
+  - platform: numeric_state
+    id: below_for_continuous
+    entity_id: !input power_sensor
+    below: !input max_watts
+    for: !input below_for
+
+  - platform: time_pattern
+    id: periodic_check
+    minutes: "*/5"
+
+condition:
+  - condition: numeric_state
+    entity_id: !input power_sensor
+    below: !input max_watts
+  - condition: template
+    value_template: >-
+      {% if trigger.id == 'periodic_check' %}
+        {% set age = as_timestamp(now()) - as_timestamp(states[power_sensor].last_changed) %}
+        {% set last = state_attr(this.entity_id, 'last_triggered') %}
+        {% set gap_ok = last is none or (as_timestamp(now()) - as_timestamp(last)) >= (below_seconds | int) %}
+        {{ age >= (below_seconds | int) and gap_ok }}
+      {% else %}
+        true
+      {% endif %}
+
+action:
+  - device_id: !input mobile_device
+    domain: mobile_app
+    type: notify
+    message: !input notify_message
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ notify_once }}"
+        sequence:
+          - wait_for_trigger:
+              - platform: numeric_state
+                entity_id: !input power_sensor
+                above: !input max_watts
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ notify_on_above }}"
+                sequence:
+                  - device_id: !input mobile_device
+                    domain: mobile_app
+                    type: notify
+                    message: !input notify_message_above
+
