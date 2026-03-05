@@ -2,12 +2,19 @@ blueprint:
   name: Danfoss Ally (Zigbee2MQTT) - Pause/Resume Heating On Window State
   description: 'Pauses Danfoss Ally heating (window_open_external = on) when any selected
     open/close sensor has remained open for the configured time, and resumes heating
-    (window_open_external = off) once no selected sensors are open.
+    (window_open_external = off) once no selected sensors are considered open.
 
-    This blueprint targets Zigbee2MQTT by controlling each thermostat''s `window_open_external`
-    switch entity (turn on = open window detected, turn off = resume normal heating).
+    This blueprint targets Zigbee2MQTT by controlling each thermostat''s
+    `window_open_external` switch entity (turn on = open window detected,
+    turn off = resume normal heating).
 
-    It also supports startup/reload state sync.
+    By default, only sensor state `on` is treated as open. Sensor states `off`,
+    `unknown`, and `unavailable` are treated as not-open. This can be changed with
+    the unavailable-state option below.
+
+    Startup/reload sync is immediate when enabled. It does not wait for `open_for`
+    or `close_for`; it simply evaluates the current room state and applies the corresponding
+    thermostat setting.
 
     '
   source_url: https://github.com/theDiverDK/HomeAssistant-Blueprints/blob/main/danfoss_ally/window_open_pause_heating.yaml
@@ -48,39 +55,51 @@ blueprint:
         duration: {}
     close_for:
       name: Closed duration before resume
-      description: 'How long a sensor must stay in a not-open state (`off`, `unknown`,
-        `unavailable`) before the automation re-evaluates resume.
+      description: 'How long the room must remain without any sensor considered open
+        before heating resumes.
 
         '
       default: 00:01:00
       selector:
         duration: {}
+    unavailable_behavior:
+      name: Unknown/unavailable handling
+      description: 'Choose whether `unknown` and `unavailable` should count as open.
+
+        `treat_as_closed` resumes heating as long as no sensor is `on`.
+
+        `treat_as_open` keeps heating paused until every sensor is explicitly `off`.
+
+        '
+      default: treat_as_closed
+      selector:
+        select:
+          options:
+            - label: Treat as closed
+              value: treat_as_closed
+            - label: Treat as open
+              value: treat_as_open
     sync_on_startup:
       name: Sync state on startup/reload
-      description: 'On Home Assistant startup or automation reload, re-evaluate all
-        selected sensors and set thermostat window-open switches accordingly.
+      description: 'On Home Assistant startup or automation reload, immediately re-evaluate
+        all selected sensors and set thermostat window-open switches accordingly.
+        This does not wait for `open_for` or `close_for`.
 
         '
       default: true
       selector:
         boolean: {}
-mode: single
+mode: restart
 max_exceeded: silent
-trigger_variables:
-  monitored_open_close_sensors: !input open_close_sensors
 variables:
   monitored_open_close_sensors: !input open_close_sensors
   trv_window_open_switches: !input thermostats_window_open
+  unavailable_behavior: !input unavailable_behavior
   startup_sync_enabled: !input sync_on_startup
 trigger:
-- platform: template
-  id: any_open_for
-  value_template: "{{ expand(monitored_open_close_sensors) | selectattr('state', 'eq', 'on') | list | count > 0 }}"
-  for: !input open_for
-- platform: template
-  id: no_open_for
-  value_template: "{{ expand(monitored_open_close_sensors) | selectattr('state', 'eq', 'on') | list | count == 0 }}"
-  for: !input close_for
+- platform: state
+  id: sensor_change
+  entity_id: !input open_close_sensors
 - platform: homeassistant
   id: startup_sync
   event: start
@@ -92,9 +111,16 @@ action:
   value_template: '{{ trigger.id != ''startup_sync'' or startup_sync_enabled }}'
 - choose:
   - conditions:
+    - condition: trigger
+      id: startup_sync
     - condition: template
-      value_template: "{{ expand(monitored_open_close_sensors)\n   | selectattr('state',
-        'eq', 'on')\n   | list\n   | count > 0 }}\n"
+      value_template: >-
+        {% set open_states = ['on'] if unavailable_behavior == 'treat_as_closed'
+           else ['on', 'unknown', 'unavailable'] %}
+        {{ expand(monitored_open_close_sensors)
+           | selectattr('state', 'in', open_states)
+           | list
+           | count > 0 }}
     sequence:
     - repeat:
         for_each: '{{ trv_window_open_switches }}'
@@ -102,7 +128,51 @@ action:
         - service: switch.turn_on
           target:
             entity_id: '{{ repeat.item }}'
+  - conditions:
+    - condition: trigger
+      id: startup_sync
+    sequence:
+    - repeat:
+        for_each: '{{ trv_window_open_switches }}'
+        sequence:
+        - service: switch.turn_off
+          target:
+            entity_id: '{{ repeat.item }}'
+  - conditions:
+    - condition: template
+      value_template: >-
+        {% set open_states = ['on'] if unavailable_behavior == 'treat_as_closed'
+           else ['on', 'unknown', 'unavailable'] %}
+        {{ expand(monitored_open_close_sensors)
+           | selectattr('state', 'in', open_states)
+           | list
+           | count > 0 }}
+    sequence:
+    - delay: !input open_for
+    - condition: template
+      value_template: >-
+        {% set open_states = ['on'] if unavailable_behavior == 'treat_as_closed'
+           else ['on', 'unknown', 'unavailable'] %}
+        {{ expand(monitored_open_close_sensors)
+           | selectattr('state', 'in', open_states)
+           | list
+           | count > 0 }}
+    - repeat:
+        for_each: '{{ trv_window_open_switches }}'
+        sequence:
+        - service: switch.turn_on
+          target:
+            entity_id: '{{ repeat.item }}'
   default:
+  - delay: !input close_for
+  - condition: template
+    value_template: >-
+      {% set open_states = ['on'] if unavailable_behavior == 'treat_as_closed'
+         else ['on', 'unknown', 'unavailable'] %}
+      {{ expand(monitored_open_close_sensors)
+         | selectattr('state', 'in', open_states)
+         | list
+         | count == 0 }}
   - repeat:
       for_each: '{{ trv_window_open_switches }}'
       sequence:
