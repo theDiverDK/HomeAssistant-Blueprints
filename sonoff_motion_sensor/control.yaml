@@ -1,6 +1,8 @@
 blueprint:
   name: Sonoff SBZ-03 Motion sensor light on/off with delay
-  description: Turn on lights when motion is detected, and turn them off after a configurable delay when no motion is detected.
+  description: >
+    Turn on lights when motion is detected, and turn them off after a
+    configurable delay when no motion is detected.
   domain: automation
   input:
     motion_sensor:
@@ -21,43 +23,43 @@ blueprint:
               - switch
     delay_time:
       name: Delay Time
-      description: The time to wait (in minutes) after no motion is detected before turning off the lights.
+      description: The time to wait in minutes after no motion is detected before turning off the lights.
       default: 5
       selector:
         number:
           min: 1
           max: 60
+          step: 1
+          mode: slider
           unit_of_measurement: minutes
 
 trigger:
   - platform: state
+    id: motion_detected
     entity_id: !input motion_sensor
     to: "on"
   - platform: state
+    id: motion_cleared
     entity_id: !input motion_sensor
     to: "off"
 
 action:
-  - variables:
-      delay_time: !input delay_time
-
   - choose:
-      # If the motion sensor turns on, turn on the lights
       - conditions:
-          - condition: state
-            entity_id: !input motion_sensor
-            state: "on"
+          - condition: trigger
+            id: motion_detected
         sequence:
           - service: homeassistant.turn_on
             target: !input target_lights
-      # If the motion sensor turns off, wait for the specified delay and then turn off the lights
       - conditions:
+          - condition: trigger
+            id: motion_cleared
+        sequence:
+          - delay:
+              minutes: !input delay_time
           - condition: state
             entity_id: !input motion_sensor
             state: "off"
-        sequence:
-          - delay: 
-              minutes: "{{ delay_time | int -1}}" 
           - service: homeassistant.turn_off
             target: !input target_lights
 

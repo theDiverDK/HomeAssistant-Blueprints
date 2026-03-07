@@ -36,7 +36,9 @@ blueprint:
     thermostats_window_open:
       name: Danfoss Ally window-open controls
       description: 'Select 1..n Zigbee2MQTT switch entities for `window_open_external`
-        (typically named like `switch.<trv>_window_open_external`).
+        (typically named like `switch.<trv>_window_open_external`). Any selected
+        switch whose entity ID does not end with `_window_open_external` is ignored
+        by the automation.
 
         '
       selector:
@@ -94,6 +96,10 @@ max_exceeded: silent
 variables:
   monitored_open_close_sensors: !input open_close_sensors
   trv_window_open_switches: !input thermostats_window_open
+  valid_trv_window_open_switches: >-
+    {{ trv_window_open_switches
+       | select('search', '_window_open_external$')
+       | list }}
   unavailable_behavior: !input unavailable_behavior
   startup_sync_enabled: !input sync_on_startup
 trigger:
@@ -123,7 +129,7 @@ action:
            | count > 0 }}
     sequence:
     - repeat:
-        for_each: '{{ trv_window_open_switches }}'
+        for_each: '{{ valid_trv_window_open_switches }}'
         sequence:
         - service: switch.turn_on
           target:
@@ -133,7 +139,7 @@ action:
       id: startup_sync
     sequence:
     - repeat:
-        for_each: '{{ trv_window_open_switches }}'
+        for_each: '{{ valid_trv_window_open_switches }}'
         sequence:
         - service: switch.turn_off
           target:
@@ -158,7 +164,7 @@ action:
            | list
            | count > 0 }}
     - repeat:
-        for_each: '{{ trv_window_open_switches }}'
+        for_each: '{{ valid_trv_window_open_switches }}'
         sequence:
         - service: switch.turn_on
           target:
@@ -170,11 +176,11 @@ action:
       {% set open_states = ['on'] if unavailable_behavior == 'treat_as_closed'
          else ['on', 'unknown', 'unavailable'] %}
       {{ expand(monitored_open_close_sensors)
-         | selectattr('state', 'in', open_states)
-         | list
-         | count == 0 }}
+           | selectattr('state', 'in', open_states)
+           | list
+           | count == 0 }}
   - repeat:
-      for_each: '{{ trv_window_open_switches }}'
+      for_each: '{{ valid_trv_window_open_switches }}'
       sequence:
       - service: switch.turn_off
         target:
