@@ -22,10 +22,10 @@ blueprint:
       name: Target Light
       description: The light entities you want to control.
       selector:
-        entity:
-          domain:
-            - light
-          multiple: true
+        target:
+          entity:
+            domain:
+              - light
     target_switches:
       name: Target Switches
       description: The switches you want to control.
@@ -117,13 +117,20 @@ variables:
   brightness_end_time: !input brightness_end_time
   max_brightness: !input max_brightness
   current_time: "{{ now().strftime('%H:%M:%S') }}"
+  target_light_entities: >-
+    {% set raw_entities = target_light.entity_id if target_light is mapping else target_light %}
+    {% if raw_entities is string %}
+      {{ [raw_entities] | tojson }}
+    {% else %}
+      {{ raw_entities | default([], true) | list | tojson }}
+    {% endif %}
   within_brightness_period: >
     {{ time_based_brightness_enable and (
        (brightness_start_time <= brightness_end_time and brightness_start_time <= current_time <= brightness_end_time) or
        (brightness_start_time > brightness_end_time and (current_time >= brightness_start_time or current_time <= brightness_end_time))
     ) }}
   any_target_light_on: >
-    {{ expand(target_light)
+    {{ expand(target_light_entities | from_json)
        | selectattr('state', 'eq', 'on')
        | list
        | count > 0 }}
@@ -142,10 +149,14 @@ action:
                   - condition: template
                     value_template: "{{ not any_target_light_on }}"
                 sequence:
-                  - service: light.turn_on
-                    target: !input target_light
-                    data:
-                      brightness_pct: "{{ max_brightness if within_brightness_period else 100 }}"
+                  - repeat:
+                      for_each: "{{ target_light_entities | from_json }}"
+                      sequence:
+                        - service: light.turn_on
+                          target:
+                            entity_id: "{{ repeat.item }}"
+                          data:
+                            brightness_pct: "{{ max_brightness if within_brightness_period else 100 }}"
                   - condition: template
                     value_template: "{{ target_switches | length > 0 and (not within_brightness_period) }}"
                   - service: homeassistant.turn_on
@@ -155,8 +166,12 @@ action:
                   - condition: template
                     value_template: "{{ any_target_light_on }}"
                 sequence:
-                  - service: light.turn_off
-                    target: !input target_light
+                  - repeat:
+                      for_each: "{{ target_light_entities | from_json }}"
+                      sequence:
+                        - service: light.turn_off
+                          target:
+                            entity_id: "{{ repeat.item }}"
                   - service: homeassistant.turn_off
                     target:
                       entity_id: !input target_switches
@@ -171,11 +186,15 @@ action:
                 - condition: template
                   value_template: "{{ is_state(active_switch_action, 'brightness_move_up') }}"
               sequence:
-                - service: light.turn_on
-                  target: !input target_light
-                  data:
-                    brightness_step_pct: 10
-                    transition: !input helper_transition_dim
+                - repeat:
+                    for_each: "{{ target_light_entities | from_json }}"
+                    sequence:
+                      - service: light.turn_on
+                        target:
+                          entity_id: "{{ repeat.item }}"
+                        data:
+                          brightness_step_pct: 10
+                          transition: !input helper_transition_dim
                 - delay:
                     milliseconds: !input helper_delay
       - conditions:
@@ -189,11 +208,15 @@ action:
                 - condition: template
                   value_template: "{{ is_state(active_switch_action, 'brightness_move_down') }}"
               sequence:
-                - service: light.turn_on
-                  target: !input target_light
-                  data:
-                    brightness_step_pct: -10
-                    transition: !input helper_transition_dim
+                - repeat:
+                    for_each: "{{ target_light_entities | from_json }}"
+                    sequence:
+                      - service: light.turn_on
+                        target:
+                          entity_id: "{{ repeat.item }}"
+                        data:
+                          brightness_step_pct: -10
+                          transition: !input helper_transition_dim
                 - delay:
                     milliseconds: !input helper_delay
 mode: restart
