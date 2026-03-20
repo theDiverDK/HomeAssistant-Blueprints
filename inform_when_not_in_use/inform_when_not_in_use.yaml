@@ -5,11 +5,13 @@ blueprint:
     chosen watt threshold for an entire period, and optionally sends a second
     notification when usage goes above the threshold again.
 
-    Optionally, on Home Assistant startup or automation reload, the blueprint
-    can wait the full configured period and then re-check the sensor if it is
-    already below the threshold. When recurring reminders are enabled, a new
-    notification is sent for each full inactive period while usage stays below
-    the threshold.
+    A notification is only sent after the sensor has first been above the
+    threshold and then stayed below it for the full configured period. This
+    avoids false notifications after Home Assistant restarts or automation
+    reloads while the device is already inactive.
+
+    When recurring reminders are enabled, a new notification is sent for each
+    full inactive period while usage stays below the threshold.
 
     The "usage above threshold again" notification is only sent after a previous
     "not in use" notification has already been sent for the current inactive
@@ -42,15 +44,6 @@ blueprint:
         seconds: 0
       selector:
         duration: {}
-    check_on_startup:
-      name: Check on startup/reload
-      description: >-
-        If enabled, the blueprint also evaluates the inactive condition after
-        Home Assistant startup or automation reload. Leave this disabled if your
-        server restarts regularly and you do not want startup-triggered reminders.
-      default: false
-      selector:
-        boolean: {}
     mobile_device:
       name: Mobile device
       description: Phone/tablet that should receive the push notification
@@ -94,7 +87,6 @@ blueprint:
 mode: single
 
 variables:
-  check_on_startup: !input check_on_startup
   notify_once: !input notify_once
   notify_on_above: !input notify_on_above
 
@@ -105,38 +97,9 @@ trigger:
     below: !input max_watts
     for: !input below_for
 
-  - platform: homeassistant
-    id: startup_check
-    event: start
-
-  - platform: event
-    id: startup_check
-    event_type: automation_reloaded
-
 condition: []
 
 action:
-  - choose:
-      - conditions:
-          - condition: trigger
-            id: startup_check
-          - condition: template
-            value_template: "{{ check_on_startup }}"
-          - condition: numeric_state
-            entity_id: !input power_sensor
-            below: !input max_watts
-        sequence:
-          - delay: !input below_for
-          - condition: numeric_state
-            entity_id: !input power_sensor
-            below: !input max_watts
-      - conditions:
-          - condition: trigger
-            id: below_for_continuous
-        sequence: []
-    default:
-      - stop: No qualifying inactive period detected
-
   - device_id: !input mobile_device
     domain: mobile_app
     type: notify
