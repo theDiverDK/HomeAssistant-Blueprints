@@ -1,12 +1,13 @@
 blueprint:
   name: Danfoss Ally (Zigbee2MQTT) - Pause/Resume Heating On Window State
-  description: 'Pauses Danfoss Ally heating (window_open_external = on) when any selected
-    open/close sensor has remained open for the configured time, and resumes heating
-    (window_open_external = off) once no selected sensors are considered open.
+  description: 'Pauses Danfoss Ally heating when any selected open/close sensor has
+    remained open for the configured time, and resumes heating once no selected
+    sensors are considered open.
 
     This blueprint targets Zigbee2MQTT by controlling each thermostat''s
-    `window_open_external` switch entity (turn on = open window detected,
-    turn off = resume normal heating).
+    `window_open_external` switch entity and Home Assistant `climate` entity.
+    Open window detected means `window_open_external = on` and `hvac_mode = off`.
+    Resume normal heating means `window_open_external = off` and `hvac_mode = heat`.
 
     By default, only sensor state `on` is treated as open. Sensor states `off`,
     `unknown`, and `unavailable` are treated as not-open. This can be changed with
@@ -49,6 +50,20 @@ blueprint:
             - switch
             integration: mqtt
           reorder: false
+    thermostats_climate:
+      name: Danfoss Ally climate controls
+      description: 'Select 1..n climate entities for the same thermostats. These
+        are set to `off` while a window is open and back to `heat` when heating
+        should resume.
+
+        '
+      selector:
+        entity:
+          multiple: true
+          filter:
+          - domain:
+            - climate
+          reorder: false
     open_for:
       name: Open duration before pause
       description: How long a sensor must stay open before heating is paused.
@@ -84,7 +99,8 @@ blueprint:
     sync_on_startup:
       name: Sync state on startup/reload
       description: 'On Home Assistant startup or automation reload, immediately re-evaluate
-        all selected sensors and set thermostat window-open switches accordingly.
+        all selected sensors and set thermostat window-open switches and climate
+        modes accordingly.
         This does not wait for `open_for` or `close_for`.
 
         '
@@ -96,6 +112,7 @@ max_exceeded: silent
 variables:
   monitored_open_close_sensors: !input open_close_sensors
   trv_window_open_switches: !input thermostats_window_open
+  trv_climate_entities: !input thermostats_climate
   valid_trv_window_open_switches: >-
     {{ trv_window_open_switches
        | select('search', '_window_open_external$')
@@ -134,6 +151,14 @@ action:
         - service: switch.turn_on
           target:
             entity_id: '{{ repeat.item }}'
+    - repeat:
+        for_each: '{{ trv_climate_entities }}'
+        sequence:
+        - service: climate.set_hvac_mode
+          target:
+            entity_id: '{{ repeat.item }}'
+          data:
+            hvac_mode: 'off'
   - conditions:
     - condition: trigger
       id: startup_sync
@@ -144,6 +169,14 @@ action:
         - service: switch.turn_off
           target:
             entity_id: '{{ repeat.item }}'
+    - repeat:
+        for_each: '{{ trv_climate_entities }}'
+        sequence:
+        - service: climate.set_hvac_mode
+          target:
+            entity_id: '{{ repeat.item }}'
+          data:
+            hvac_mode: heat
   - conditions:
     - condition: template
       value_template: >-
@@ -169,6 +202,14 @@ action:
         - service: switch.turn_on
           target:
             entity_id: '{{ repeat.item }}'
+    - repeat:
+        for_each: '{{ trv_climate_entities }}'
+        sequence:
+        - service: climate.set_hvac_mode
+          target:
+            entity_id: '{{ repeat.item }}'
+          data:
+            hvac_mode: 'off'
   default:
   - delay: !input close_for
   - condition: template
@@ -185,3 +226,11 @@ action:
       - service: switch.turn_off
         target:
           entity_id: '{{ repeat.item }}'
+  - repeat:
+      for_each: '{{ trv_climate_entities }}'
+      sequence:
+      - service: climate.set_hvac_mode
+        target:
+          entity_id: '{{ repeat.item }}'
+        data:
+          hvac_mode: heat
