@@ -4,10 +4,13 @@ blueprint:
     remained open for the configured time, and resumes heating once no selected
     sensors are considered open.
 
-    This blueprint targets Zigbee2MQTT by controlling each thermostat''s
-    `window_open_external` switch entity and Home Assistant `climate` entity.
-    Open window detected means `window_open_external = on` and `hvac_mode = off`.
-    Resume normal heating means `window_open_external = off` and `hvac_mode = heat`.
+    This blueprint targets Zigbee2MQTT switch entities only. It controls each
+    thermostat''s `window_open_external` switch and `heat_available` switch instead
+    of changing the Home Assistant climate entity HVAC mode.
+    Open window detected means `window_open_external = on` and `heat_available = off`,
+    which marks the window as open and tells the thermostat heat is not available.
+    Resume normal heating means `window_open_external = off` and `heat_available = on`,
+    which clears the external window-open flag and makes heat available again.
 
     By default, only sensor state `on` is treated as open. Sensor states `off`,
     `unknown`, and `unavailable` are treated as not-open. This can be changed with
@@ -15,7 +18,7 @@ blueprint:
 
     Startup/reload sync is immediate when enabled. It does not wait for `open_for`
     or `close_for`; it simply evaluates the current room state and applies the corresponding
-    thermostat setting.
+    window-open and heat-available switch states.
 
     '
   source_url: https://github.com/theDiverDK/HomeAssistant-Blueprints/blob/main/danfoss_ally/window_open_pause_heating.yaml
@@ -50,11 +53,13 @@ blueprint:
             - switch
             integration: mqtt
           reorder: false
-    thermostats_climate:
-      name: Danfoss Ally climate controls
-      description: 'Select 1..n climate entities for the same thermostats. These
-        are set to `off` while a window is open and back to `heat` when heating
-        should resume.
+    thermostats_heat_available:
+      name: Danfoss Ally heat-available controls
+      description: 'Select 1..n Zigbee2MQTT switch entities for `heat_available`
+        (typically named like `switch.<trv>_heat_available`). These are set to
+        `off` while a window is open and back to `on` when heating should resume.
+        Any selected switch whose entity ID does not end with `_heat_available`
+        is ignored by the automation.
 
         '
       selector:
@@ -62,7 +67,8 @@ blueprint:
           multiple: true
           filter:
           - domain:
-            - climate
+            - switch
+            integration: mqtt
           reorder: false
     open_for:
       name: Open duration before pause
@@ -99,8 +105,8 @@ blueprint:
     sync_on_startup:
       name: Sync state on startup/reload
       description: 'On Home Assistant startup or automation reload, immediately re-evaluate
-        all selected sensors and set thermostat window-open switches and climate
-        modes accordingly.
+        all selected sensors and set thermostat window-open and heat-available
+        switches accordingly.
         This does not wait for `open_for` or `close_for`.
 
         '
@@ -112,10 +118,14 @@ max_exceeded: silent
 variables:
   monitored_open_close_sensors: !input open_close_sensors
   trv_window_open_switches: !input thermostats_window_open
-  trv_climate_entities: !input thermostats_climate
+  trv_heat_available_switches: !input thermostats_heat_available
   valid_trv_window_open_switches: >-
     {{ trv_window_open_switches
        | select('search', '_window_open_external$')
+       | list }}
+  valid_trv_heat_available_switches: >-
+    {{ trv_heat_available_switches
+       | select('search', '_heat_available$')
        | list }}
   unavailable_behavior: !input unavailable_behavior
   startup_sync_enabled: !input sync_on_startup
@@ -152,13 +162,11 @@ action:
           target:
             entity_id: '{{ repeat.item }}'
     - repeat:
-        for_each: '{{ trv_climate_entities }}'
+        for_each: '{{ valid_trv_heat_available_switches }}'
         sequence:
-        - service: climate.set_hvac_mode
+        - service: switch.turn_off
           target:
             entity_id: '{{ repeat.item }}'
-          data:
-            hvac_mode: 'off'
   - conditions:
     - condition: trigger
       id: startup_sync
@@ -170,13 +178,11 @@ action:
           target:
             entity_id: '{{ repeat.item }}'
     - repeat:
-        for_each: '{{ trv_climate_entities }}'
+        for_each: '{{ valid_trv_heat_available_switches }}'
         sequence:
-        - service: climate.set_hvac_mode
+        - service: switch.turn_on
           target:
             entity_id: '{{ repeat.item }}'
-          data:
-            hvac_mode: heat
   - conditions:
     - condition: template
       value_template: >-
@@ -203,13 +209,11 @@ action:
           target:
             entity_id: '{{ repeat.item }}'
     - repeat:
-        for_each: '{{ trv_climate_entities }}'
+        for_each: '{{ valid_trv_heat_available_switches }}'
         sequence:
-        - service: climate.set_hvac_mode
+        - service: switch.turn_off
           target:
             entity_id: '{{ repeat.item }}'
-          data:
-            hvac_mode: 'off'
   default:
   - delay: !input close_for
   - condition: template
@@ -227,10 +231,8 @@ action:
         target:
           entity_id: '{{ repeat.item }}'
   - repeat:
-      for_each: '{{ trv_climate_entities }}'
+      for_each: '{{ valid_trv_heat_available_switches }}'
       sequence:
-      - service: climate.set_hvac_mode
+      - service: switch.turn_on
         target:
           entity_id: '{{ repeat.item }}'
-        data:
-          hvac_mode: heat
